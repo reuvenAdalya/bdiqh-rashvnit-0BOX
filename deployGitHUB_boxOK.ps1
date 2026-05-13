@@ -29,11 +29,15 @@ function Get-TransliteratedName {
     return ($result -replace '-+', '-').Trim('-')
 }
 
-# --- 2. וידוא חיבור ---
+# --- 2. וידוא חיבור וזיהוי משתמש ---
 $username = gh api user --jq .login 2>$null
-if (!$username) { Write-Host "Please login: gh auth login" -ForegroundColor Red; exit }
+if (!$username) { 
+    Write-Host "ERROR: Please run 'gh auth login' first." -ForegroundColor Red
+    Read-Host "Press Enter to exit"
+    exit 
+}
 
-# --- 3. זיהוי נתיבים ---
+# --- 3. זיהוי נתיבים ושמות ---
 $currentFolder = Get-Item $PSScriptRoot
 $parentFolder = $currentFolder.Parent
 $fullFolderName = $parentFolder.Name
@@ -41,17 +45,17 @@ $parts = $fullFolderName -split ' ', 2
 $projectPart = if ($parts.Count -gt 1) { $parts[1] } else { $fullFolderName }
 $suggestedName = Get-TransliteratedName -InputString $projectPart
 
-# --- 4. אישור פרטים ---
+# --- 4. אישור פרטים (Repo + Topic) ---
 $repoName = [Microsoft.VisualBasic.Interaction]::InputBox("Confirm Repo Name:", "GitHub Deploy", $suggestedName)
 if (!$repoName) { exit }
-$topicName = [Microsoft.VisualBasic.Interaction]::InputBox("Enter Topic:", "GitHub Topic", "havitot")
+
+$topicName = [Microsoft.VisualBasic.Interaction]::InputBox("Enter Project Topic:", "GitHub Topic", "havitot")
 if (!$topicName) { $topicName = "havitot" }
 
-# --- 5. עבודת Git + פתרון בעיית Box ---
+# --- 5. עבודת Git + פתרון Box ---
 Set-Location $currentFolder.FullName
 
-# פתרון קריטי לבעיית ה-Dubious Ownership ב-Box
-Write-Host "Registering directory as safe for Git..." -ForegroundColor Gray
+# רישום התיקייה כבטוחה ל-Git (פתרון ל-Box)
 git config --global --add safe.directory $currentFolder.FullName.Replace('\', '/')
 
 if (!(Test-Path ".git")) {
@@ -60,31 +64,37 @@ if (!(Test-Path ".git")) {
 }
 git branch -M main
 
-# יצירה וסנכרון
+# יצירה ב-GitHub
 $remoteExists = git remote | Where-Object { $_ -eq "origin" }
 if (!$remoteExists) {
     Write-Host "Creating Repository on GitHub..." -ForegroundColor Cyan
     gh repo create $repoName --public --source=. --remote=origin
 }
 
+# עדכון תגית
 gh repo edit $repoName --add-topic $topicName
 
-Write-Host "Pushing files..." -ForegroundColor White
+# העלאת קבצים
+Write-Host "Pushing files to GitHub..." -ForegroundColor White
 git add .
-git commit -m "Initial deploy from Box" 2>$null
+git commit -m "Automated update" 2>$null
 git push -u origin main --force
 
-# --- 6. הפעלת Pages (API) ---
+# --- 6. הפעלת Pages (שימוש ב-API הישיר) ---
 Write-Host "Enforcing GitHub Pages configuration..." -ForegroundColor Yellow
 Start-Sleep -Seconds 5
 $apiPath = "repos/$username/$repoName/pages"
 gh api -X POST $apiPath -f "source[branch]=main" -f "source[path]=/" --silent 2>$null
 gh repo edit $repoName --enable-pages --pages-branch main --pages-path / 2>$null
 
-# --- 7. סיום ---
+# --- 7. סיום, כתיבת קובץ ופתיחת דפדפן ---
 $siteUrl = "https://$username.github.io/$repoName/"
-Write-Host "`n" + ("=" * 50) -ForegroundColor Green
-Write-Host "  SUCCESS! Project is live at:" -ForegroundColor Green
+
+# יצירת קובץ הטקסט בתיקייה המקומית
+$urlFilePath = Join-Path $currentFolder.FullName "webURL.txt"
+$siteUrl | Out-File -FilePath $urlFilePath -Encoding utf8
+Write-Host "Created file: webURL.txt with the live link." -ForegroundColor Gray
+
 Write-Host "  $siteUrl" -ForegroundColor White
 Write-Host ("=" * 50) -ForegroundColor Green
 
